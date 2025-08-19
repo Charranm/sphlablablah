@@ -25,7 +25,7 @@ st.markdown("This dashboard displays insights, clustering results, and interacti
 # -------------------------------
 # STEP 0: Load Raw Data
 # -------------------------------
-df = pd.read_csv('D:/university/DISSERTATION/US  E-commerce records 2020.csv', encoding='windows-1252')
+df = pd.read_csv('D:/intern/spectralclustering/US  E-commerce records 2020.csv', encoding='windows-1252')
 st.success(f"✅ Loaded dataset with {df.shape[0]:,} rows and {df.shape[1]:,} columns.")
 
 # -------------------------------
@@ -256,7 +256,7 @@ fig_radar.update_layout(height=500, width=1200, title_text="Cluster Characterist
 # -------------------------------
 # Folium Map
 # -------------------------------
-geo_df = pd.read_csv('D:/university/DISSERTATION/world_country_and_usa_states_latitude_and_longitude_values.csv')
+geo_df = pd.read_csv('D:/intern/spectralclustering/world_country_and_usa_states_latitude_and_longitude_values.csv')
 geo_df = geo_df[['usa_state', 'usa_state_latitude', 'usa_state_longitude']].drop_duplicates()
 
 state_summary = df.groupby(['State', 'Cluster']).agg({'Sales':'sum','Profit':'sum','Quantity':'sum'}).reset_index()

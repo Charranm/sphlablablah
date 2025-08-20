@@ -290,43 +290,48 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     st.subheader("⚙️ Adjust Hyperparameters for Spectral Clustering")
     st.markdown("### 🎛 Clustering Controls")
-    # Find best k automatically (before rendering slider)
-best_k = None
-best_score = -1
 
-for k_test in range(2, 11):  # test k=2..10
-    sc_tmp = SpectralClustering(n_clusters=k_test, affinity='rbf', gamma=1.0, random_state=42)
-    labels_tmp = sc_tmp.fit_predict(X_pca)
-    score_tmp = silhouette_score(X_pca, labels_tmp)
-    if score_tmp > best_score:
-        best_score = score_tmp
-        best_k = k_test
+    # -----------------------------------
+    # Step 1: Find best k automatically
+    # -----------------------------------
+    k_range = range(2, 11)
+    best_score = -1
+    best_k = 2
+    for k_test in k_range:
+        labels_test = SpectralClustering(
+            n_clusters=k_test, affinity="rbf", gamma=1.0, random_state=42
+        ).fit_predict(X_pca)
+        score = silhouette_score(X_pca, labels_test)
+        if score > best_score:
+            best_score = score
+            best_k = k_test
 
-    # Sliders in one row
+    # -----------------------------------
+    # Step 2: Sliders (with best_k default)
+    # -----------------------------------
     col1, col2, col3 = st.columns(3)
-    with col1:
-        k = st.slider("🔢 k (clusters)", 2, 10, best_k, 1, key="k_slider")
-    with col2:
-        gamma = st.slider("⚡ Gamma", 0.1, 2.0, 1.0, 0.1, key="gamma_slider")
-    with col3:
-        neighbors = st.slider("🤝 Neighbors", 2, 20, 10, 1, key="neighbors_slider")
 
-    # Display current values
+    with col1:
+        k = st.slider("🔢 k (clusters)", 2, 10, best_k, 1)   # default = best_k
+    with col2:
+        gamma = st.slider("⚡ Gamma", 0.1, 2.0, 1.0, 0.1)
+    with col3:
+        neighbors = st.slider("🤝 Neighbors", 2, 20, 10, 1)
+
     st.markdown(f"""
     - 🌀 **k** (clusters): `{k}`  
     - ⚡ **Gamma**: `{gamma}`  
     - 🤝 **Neighbors**: `{neighbors}`
     """)
 
-
-    # -------------------------------
-    # Re-run Spectral Clustering with chosen parameters
-    # -------------------------------
+    # -----------------------------------
+    # Step 3: Run clustering with chosen values
+    # -----------------------------------
     results = {}
 
     # Nearest Neighbors
     sc_nn = SpectralClustering(
-        n_clusters=k, affinity='nearest_neighbors',
+        n_clusters=k, affinity="nearest_neighbors",
         n_neighbors=neighbors, random_state=42
     )
     labels_nn = sc_nn.fit_predict(X_pca)
@@ -334,7 +339,7 @@ for k_test in range(2, 11):  # test k=2..10
 
     # RBF Kernel
     sc_rbf = SpectralClustering(
-        n_clusters=k, affinity='rbf',
+        n_clusters=k, affinity="rbf",
         gamma=gamma, random_state=42
     )
     labels_rbf = sc_rbf.fit_predict(X_pca)
@@ -343,7 +348,7 @@ for k_test in range(2, 11):  # test k=2..10
     # Precomputed (RBF Kernel)
     affinity_matrix = rbf_kernel(X_pca, gamma=gamma)
     sc_pre = SpectralClustering(
-        n_clusters=k, affinity='precomputed',
+        n_clusters=k, affinity="precomputed",
         random_state=42
     )
     labels_pre = sc_pre.fit_predict(affinity_matrix)
@@ -357,7 +362,6 @@ for k_test in range(2, 11):  # test k=2..10
         'precomputed': labels_pre
     }[best_method]
 
-    # Merge cluster labels back to main df
     df = df.merge(df_sampled[['Customer ID', 'Cluster']], on='Customer ID', how='left')
 
     st.success(
@@ -366,10 +370,10 @@ for k_test in range(2, 11):  # test k=2..10
         f"with Silhouette Score **{results[best_method]:.4f}**"
     )
 
-    # -------------------------------
-    # Sales Statistics Display (your original Tab 1 contents)
-    # -------------------------------
-    st.subheader("SALES STATISTICS")
+    # -----------------------------------
+    # Step 4: Your Sales Statistics section
+    # -----------------------------------
+    st.subheader("📊 Sales Statistics")
     st.write(f"• Total Sales: ${sales_stats['Total Sales']:,.2f}")
     st.write(f"• Average Sale: ${sales_stats['Average Sales']:,.2f}")
     st.write(f"• Max Sale: ${sales_stats['Max Sales']:,.2f}")
@@ -384,21 +388,62 @@ for k_test in range(2, 11):  # test k=2..10
 
     st.subheader("📅 Monthly Sales Trend")
     st.plotly_chart(fig_monthly, use_container_width=True)
-
-    # All your existing charts
+    st.markdown("### 📊 Sales Statistics Overview")
     st.plotly_chart(fig1, use_container_width=True)
+    st.markdown("### 📈 State-wise Profit Distribution")
     st.plotly_chart(fig2, use_container_width=True)
+    st.markdown("### 📊 Top Sub-Categories by Profit")
     st.plotly_chart(fig3, use_container_width=True)
+    st.markdown("### 📈 Customer Segments Analysis")
     st.plotly_chart(fig4, use_container_width=True)
-    st.plotly_chart(fig6, use_container_width=True)
+    st.markdown("### 📊 Overall Profit Margin")
     st.plotly_chart(fig7, use_container_width=True)
-
+    st.markdown("### 📈 Category Sales by Quantity")
+    st.plotly_chart(fig6, use_container_width=True)
 # -------------------------------
 # TAB 2: Method Comparisons + Metrics
 # -------------------------------
 with tab2:
     st.subheader("🔹 Comparison of Spectral Clustering Methods (PCA Projection)")
     st.plotly_chart(fig_methods, use_container_width=True, key="methods_plot")
+    st.subheader("🔬 Spectral Clustering Methods")
+
+    # Pick method interactively
+    method_choice = st.radio(
+        "Choose clustering method:",
+        ["Nearest Neighbors", "RBF Kernel", "Precomputed Affinity"],
+        horizontal=True,
+        key="method_radio"
+    )
+
+    # Small explanations for each method
+    explanations = {
+        "Nearest Neighbors": """
+        **Nearest Neighbors Affinity**
+        - Builds graph from *k* closest points.  
+        - ✅ Captures local, non-linear shapes.  
+        - ⚠️ Choice of *k* is critical.  
+        - 🎯 Best for data with **local structure**.
+        """,
+        "RBF Kernel": """
+        **RBF Kernel Affinity**
+        - Uses Gaussian similarity with parameter γ.  
+        - ✅ Smooth, balances local + global structure.  
+        - ⚠️ Needs feature scaling + γ tuning.  
+        - 🎯 Best for **compact, globular clusters**.
+        """,
+        "Precomputed Affinity": """
+        **Precomputed RBF Affinity**
+        - You supply the similarity matrix.  
+        - ✅ Full control, allows custom kernels.  
+        - ⚠️ Memory-heavy, often similar to RBF.  
+        - 🎯 Best when you want **flexibility/custom metrics**.
+        """
+    }
+
+    # Display interactive explanation
+    st.info(explanations[method_choice])
+    st.subheader("📊 Spectral Clustering Evaluation Metrics")
 
     # -------------------------------
     # Cluster Evaluation Metrics Table
@@ -433,18 +478,14 @@ with tab2:
     # Convert to DataFrame
     metrics_df = pd.DataFrame(metrics_dict).T.reset_index().rename(columns={'index':'Method'})
 
-    st.subheader("📊 Spectral Clustering Evaluation Metrics")
     st.dataframe(metrics_df.style.format({
         'Silhouette': "{:.4f}",
         'Davies–Bouldin': "{:.4f}",
         'Calinski–Harabasz': "{:.2f}"
     }))
 
-    # -------------------------------
-    # Bar Charts for Metrics Comparison
-    # -------------------------------
+    # --- Bar Charts (already in your code) ---
     st.subheader("📊 Metrics Comparison (Visual)")
-
     # Silhouette Score
     fig_silhouette = px.bar(
         metrics_df, x='Method', y='Silhouette',
@@ -471,6 +512,25 @@ with tab2:
         title="Calinski–Harabasz Score Comparison"
     )
     st.plotly_chart(fig_ch, use_container_width=True, key="ch_plot")
+
+    # --- Executive Explanation ---
+    best_method = metrics_df.loc[metrics_df['Silhouette'].idxmax(), 'Method']
+    best_sil = metrics_df['Silhouette'].max()
+
+    explanation = f"""
+    ### ✅ Why This Outcome is Best for Project
+    - The **{best_method} method** produced the **highest Silhouette score ({best_sil:.4f})**, 
+      meaning clusters are both **well-separated** and **internally consistent**.  
+    - It also performs well across the **Davies–Bouldin** (lower is better) and 
+      **Calinski–Harabasz** (higher is better) scores.  
+    - This balance shows the clusters are **clear, stable, and meaningful** — which is 
+      crucial for making **data-driven decisions** in our project.  
+    - Choosing the best-performing method ensures **management can trust the insights**, 
+      since the segmentation is based on **objective evaluation metrics**, not guesswork.
+    """
+
+    st.success(explanation) 
+
 
 # -------------------------------
 # TAB 3: Cluster Characteristics

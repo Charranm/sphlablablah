@@ -51,42 +51,127 @@ df['Segment_Code'] = df['Segment'].cat.codes
 df.replace([np.inf, -np.inf], np.nan, inplace=True)
 for col in df.select_dtypes(include=[np.number]).columns:
     df[col] = df[col].fillna(0)
+# Sample 5000 rows randomly for faster clustering
+df_sampled = df.sample(n=5000, random_state=42)
 
 # -------------------------------
-# Spectral Clustering
+# Spectral Clustering (Comparative)
 # -------------------------------
-df_sampled = df[df['Country'] == 'United States'].sample(n=1000, random_state=42).copy()
-features = df_sampled[['Sales', 'Quantity', 'Discount', 'Profit', 'Profit Margin', 'Unit Price', 'Discounted Price']]
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(features)
-pca = PCA(n_components=5, random_state=42)
-X_pca = pca.fit_transform(X_scaled)
+# Extra metrics & kernels (add imports near top of file if you haven't)
+from sklearn.metrics import davies_bouldin_score, calinski_harabasz_score
+from sklearn.metrics.pairwise import cosine_similarity
 
+# Controls
+st.sidebar.markdown("### 🔧 Clustering Controls")
+best_n = st.sidebar.slider("Number of clusters", 2, 10, 3, 1)
+gamma = st.sidebar.slider("RBF gamma", 0.01, 5.0, 1.0, 0.01)
+n_neighbors = st.sidebar.slider("Nearest neighbors (affinity=nearest_neighbors)", 3, 30, 5, 1)
+
+# Candidate configurations
+candidates = []
+
+# rbf affinity (uses internal kernel)
+for solver in ["arpack", "lobpcg"]:
+    candidates.append({
+        "name": f"rbf | {solver}",
+        "affinity": "rbf",
+        "eigen_solver": solver,
+        "params": {"gamma": gamma}
+    })
+
+# nearest_neighbors affinity
+for solver in ["arpack", "lobpcg"]:
+    candidates.append({
+        "name": f"nearest_neighbors | {solver} | k={n_neighbors}",
+        "affinity": "nearest_neighbors",
+        "eigen_solver": solver,
+        "params": {"n_neighbors": n_neighbors}
+    })
+
+# precomputed affinity with custom kernels
+kernels = {
+    "rbf_kernel(custom)": lambda X: rbf_kernel(X, gamma=gamma),
+    "cosine_similarity": lambda X: cosine_similarity(X)
+}
+
+for kname, kfunc in kernels.items():
+    for solver in ["arpack", "lobpcg"]:
+        candidates.append({
+            "name": f"precomputed:{kname} | {solver}",
+            "affinity": "precomputed",
+            "eigen_solver": solver,
+            "kernel_func": kfunc
+        })
+
+results_rows = []
+labels_dict = {}
 results = {}
-sc_nn = SpectralClustering(n_clusters=3, affinity='nearest_neighbors', n_neighbors=5, random_state=42)
-labels_nn = sc_nn.fit_predict(X_pca)
-results['nearest_neighbors'] = silhouette_score(X_pca, labels_nn)
 
-sc_rbf = SpectralClustering(n_clusters=3, affinity='rbf', gamma=1.0, random_state=42)
-labels_rbf = sc_rbf.fit_predict(X_pca)
-results['rbf'] = silhouette_score(X_pca, labels_rbf)
+for cfg in candidates:
+    try:
+        if cfg["affinity"] == "precomputed":
+            K = cfg["kernel_func"](X_pca)  # kernel on PCA space
+            model = SpectralClustering(
+                n_clusters=best_n,
+                affinity="precomputed",
+                eigen_solver=cfg["eigen_solver"],
+                random_state=42,
+                assign_labels="kmeans"
+            )
+            labels = model.fit_predict(K)
+        else:
+            model = SpectralClustering(
+                n_clusters=best_n,
+                affinity=cfg["affinity"],
+                eigen_solver=cfg["eigen_solver"],
+                random_state=42,
+                assign_labels="kmeans",
+                **cfg.get("params", {})
+            )
+            labels = model.fit_predict(X_pca)
 
-affinity_matrix = rbf_kernel(X_pca, gamma=1.0)
-sc_pre = SpectralClustering(n_clusters=3, affinity='precomputed', random_state=42)
-labels_pre = sc_pre.fit_predict(affinity_matrix)
-results['precomputed'] = silhouette_score(X_pca, labels_pre)
+        # Metrics
+        sil = silhouette_score(X_pca, labels)
+        dbi = davies_bouldin_score(X_pca, labels)
+        chi = calinski_harabasz_score(X_pca, labels)
 
-best_method = max(results, key=results.get)
-df_sampled['Cluster'] = {
-    'nearest_neighbors': labels_nn,
-    'rbf': labels_rbf,
-    'precomputed': labels_pre
-}[best_method]
+        results_rows.append({
+            "Method": cfg["name"],
+            "Affinity": cfg["affinity"],
+            "EigenSolver": cfg["eigen_solver"],
+            "Silhouette": sil,
+            "DaviesBouldin": dbi,
+            "CalinskiHarabasz": chi
+        })
+        labels_dict[cfg["name"]] = labels
+        results[cfg["name"]] = sil
 
-st.write(f"**🏆 Best Method:** `{best_method}` with Silhouette Score **{results[best_method]:.4f}**")
+    except Exception as e:
+        # Skip methods that fail (e.g., solver not supported in env)
+        st.sidebar.warning(f"Skipped {cfg['name']} due to: {e}")
 
-# Merge cluster labels back to main df
-df = df.merge(df_sampled[['Customer ID', 'Cluster']], on='Customer ID', how='left')
+# Results table
+results_df = pd.DataFrame(results_rows)
+if results_df.empty:
+    st.error("No clustering results produced. Try different parameters.")
+else:
+    # Pick best by Silhouette (higher is better)
+    best_row = results_df.sort_values("Silhouette", ascending=False).iloc[0]
+    best_method = best_row["Method"]
+
+    # Attach best labels to df_sampled
+    df_sampled["Cluster"] = labels_dict[best_method].astype(int)
+
+    st.write(f"**🏆 Best Method:** `{best_method}` "
+             f"with Silhouette **{best_row['Silhouette']:.4f}**, "
+             f"Davies–Bouldin **{best_row['DaviesBouldin']:.3f}** (lower better), "
+             f"Calinski–Harabasz **{best_row['CalinskiHarabasz']:.1f}** (higher better).")
+
+    # Merge to full df
+    df = df.merge(df_sampled[["Customer ID", "Cluster"]], on="Customer ID", how="left")
+
+    # For your PCA comparison figure, use the **top 3** methods by Silhouette
+    methods = results_df.sort_values("Silhouette", ascending=False).head(3)["Method"].tolist()
 
 # -------------------------------
 # Plotly Visualizations
@@ -201,6 +286,38 @@ top_subcats = category_analysis.head(20).reset_index()
 cluster_summary = df_sampled.groupby('Cluster').agg({
     'Sales': 'mean', 'Profit': 'mean', 'Customer ID': 'count'
 }).rename(columns={'Customer ID': 'Customer Count'})
+
+
+# -------------------------------
+# Metric comparison figures
+# -------------------------------
+if not results_df.empty:
+    # Silhouette (higher is better)
+    fig_silhouette = px.bar(
+        results_df.sort_values("Silhouette", ascending=False),
+        x="Method", y="Silhouette",
+        title="Silhouette Score by Method",
+        text="Silhouette"
+    )
+    fig_silhouette.update_layout(xaxis_tickangle=-30)
+
+    # Davies–Bouldin (lower is better)
+    fig_dbi = px.bar(
+        results_df.sort_values("DaviesBouldin", ascending=True),
+        x="Method", y="DaviesBouldin",
+        title="Davies–Bouldin Index by Method (lower is better)",
+        text="DaviesBouldin"
+    )
+    fig_dbi.update_layout(xaxis_tickangle=-30)
+
+    # Calinski–Harabasz (higher is better)
+    fig_chi = px.bar(
+        results_df.sort_values("CalinskiHarabasz", ascending=False),
+        x="Method", y="CalinskiHarabasz",
+        title="Calinski–Harabasz Score by Method",
+        text="CalinskiHarabasz"
+    )
+    fig_chi.update_layout(xaxis_tickangle=-30)
 
 # -------------------------------
 # Prepare Figures
@@ -319,12 +436,17 @@ with tab2:
     st.subheader("🔹 Comparison of Spectral Clustering Methods (PCA Projection)")
     st.plotly_chart(fig_methods, use_container_width=True)
 
-    st.subheader("📊 Silhouette Score Comparison")
-    silhouette_df = pd.DataFrame({'Method': list(results.keys()), 'Silhouette Score': list(results.values())})
-    fig_silhouette = px.bar(
-        silhouette_df, x='Method', y='Silhouette Score',
-        color='Silhouette Score', color_continuous_scale='Viridis', text='Silhouette Score'
-    )
+    st.subheader("📊 Clustering Quality Metrics")
+    if results_df.empty:
+        st.info("No results to display. Adjust clustering controls in the sidebar.")
+    else:
+        st.markdown("**Higher Silhouette & Calinski–Harabasz are better; lower Davies–Bouldin is better.**")
+        st.plotly_chart(fig_silhouette, use_container_width=True)
+        st.plotly_chart(fig_dbi, use_container_width=True)
+        st.plotly_chart(fig_chi, use_container_width=True)
+        st.subheader("🔎 Full Results")
+        st.dataframe(results_df.sort_values("Silhouette", ascending=False), use_container_width=True)
+    st.subheader("📊 Silhouette Scores for Spectral Clustering Methods")
     fig_silhouette.update_layout(title="Silhouette Scores for Spectral Clustering Methods")
     st.plotly_chart(fig_silhouette, use_container_width=True)
 

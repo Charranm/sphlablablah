@@ -12,6 +12,7 @@ from sklearn.metrics.pairwise import rbf_kernel
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import matplotlib.pyplot as plt
 
 # -------------------------------
 # STREAMLIT PAGE SETTINGS
@@ -23,7 +24,7 @@ st.markdown("This dashboard displays insights, clustering results, and interacti
 # -------------------------------
 # STEP 0: Load Raw Data
 # -------------------------------
-df = pd.read_csv('D:/university/DISSERTATION/US  E-commerce records 2020.csv', encoding='windows-1252')
+df = pd.read_csv('US  E-commerce records 2020.csv', encoding='windows-1252')
 st.success(f"✅ Loaded dataset with {df.shape[0]:,} rows and {df.shape[1]:,} columns.")
 
 # -------------------------------
@@ -254,7 +255,7 @@ fig_radar.update_layout(height=500, width=1200, title_text="Cluster Characterist
 # -------------------------------
 # Folium Map
 # -------------------------------
-geo_df = pd.read_csv('D:/university/DISSERTATION/world_country_and_usa_states_latitude_and_longitude_values.csv')
+geo_df = pd.read_csv('world_country_and_usa_states_latitude_and_longitude_values.csv')
 geo_df = geo_df[['usa_state', 'usa_state_latitude', 'usa_state_longitude']].drop_duplicates()
 
 state_summary = df.groupby(['State', 'Cluster']).agg({'Sales':'sum','Profit':'sum','Quantity':'sum'}).reset_index()
@@ -284,9 +285,90 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 # -------------------------------
-# TAB 1: Sales Statistics
+# TAB 1: Sales Statistics + Hyperparameters
 # -------------------------------
 with tab1:
+    st.subheader("⚙️ Adjust Hyperparameters for Spectral Clustering")
+    st.markdown("### 🎛 Clustering Controls")
+    # Find best k automatically (before rendering slider)
+best_k = None
+best_score = -1
+
+for k_test in range(2, 11):  # test k=2..10
+    sc_tmp = SpectralClustering(n_clusters=k_test, affinity='rbf', gamma=1.0, random_state=42)
+    labels_tmp = sc_tmp.fit_predict(X_pca)
+    score_tmp = silhouette_score(X_pca, labels_tmp)
+    if score_tmp > best_score:
+        best_score = score_tmp
+        best_k = k_test
+
+    # Sliders in one row
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        k = st.slider("🔢 k (clusters)", 2, 10, best_k, 1, key="k_slider")
+    with col2:
+        gamma = st.slider("⚡ Gamma", 0.1, 2.0, 1.0, 0.1, key="gamma_slider")
+    with col3:
+        neighbors = st.slider("🤝 Neighbors", 2, 20, 10, 1, key="neighbors_slider")
+
+    # Display current values
+    st.markdown(f"""
+    - 🌀 **k** (clusters): `{k}`  
+    - ⚡ **Gamma**: `{gamma}`  
+    - 🤝 **Neighbors**: `{neighbors}`
+    """)
+
+
+    # -------------------------------
+    # Re-run Spectral Clustering with chosen parameters
+    # -------------------------------
+    results = {}
+
+    # Nearest Neighbors
+    sc_nn = SpectralClustering(
+        n_clusters=k, affinity='nearest_neighbors',
+        n_neighbors=neighbors, random_state=42
+    )
+    labels_nn = sc_nn.fit_predict(X_pca)
+    results['nearest_neighbors'] = silhouette_score(X_pca, labels_nn)
+
+    # RBF Kernel
+    sc_rbf = SpectralClustering(
+        n_clusters=k, affinity='rbf',
+        gamma=gamma, random_state=42
+    )
+    labels_rbf = sc_rbf.fit_predict(X_pca)
+    results['rbf'] = silhouette_score(X_pca, labels_rbf)
+
+    # Precomputed (RBF Kernel)
+    affinity_matrix = rbf_kernel(X_pca, gamma=gamma)
+    sc_pre = SpectralClustering(
+        n_clusters=k, affinity='precomputed',
+        random_state=42
+    )
+    labels_pre = sc_pre.fit_predict(affinity_matrix)
+    results['precomputed'] = silhouette_score(X_pca, labels_pre)
+
+    # Pick best method
+    best_method = max(results, key=results.get)
+    df_sampled['Cluster'] = {
+        'nearest_neighbors': labels_nn,
+        'rbf': labels_rbf,
+        'precomputed': labels_pre
+    }[best_method]
+
+    # Merge cluster labels back to main df
+    df = df.merge(df_sampled[['Customer ID', 'Cluster']], on='Customer ID', how='left')
+
+    st.success(
+        f"🏆 Best Method: **{best_method}** "
+        f"(k={k}, γ={gamma}, neighbors={neighbors}) "
+        f"with Silhouette Score **{results[best_method]:.4f}**"
+    )
+
+    # -------------------------------
+    # Sales Statistics Display (your original Tab 1 contents)
+    # -------------------------------
     st.subheader("SALES STATISTICS")
     st.write(f"• Total Sales: ${sales_stats['Total Sales']:,.2f}")
     st.write(f"• Average Sale: ${sales_stats['Average Sales']:,.2f}")
@@ -303,19 +385,20 @@ with tab1:
     st.subheader("📅 Monthly Sales Trend")
     st.plotly_chart(fig_monthly, use_container_width=True)
 
+    # All your existing charts
     st.plotly_chart(fig1, use_container_width=True)
     st.plotly_chart(fig2, use_container_width=True)
     st.plotly_chart(fig3, use_container_width=True)
     st.plotly_chart(fig4, use_container_width=True)
     st.plotly_chart(fig6, use_container_width=True)
-    st.plotly_chart(fig7, use_container_width=True)         
+    st.plotly_chart(fig7, use_container_width=True)
 
 # -------------------------------
-# TAB 2: Spectral Clustering Comparison
+# TAB 2: Method Comparisons + Metrics
 # -------------------------------
 with tab2:
     st.subheader("🔹 Comparison of Spectral Clustering Methods (PCA Projection)")
-    st.plotly_chart(fig_methods, use_container_width=True)
+    st.plotly_chart(fig_methods, use_container_width=True, key="methods_plot")
 
     # -------------------------------
     # Cluster Evaluation Metrics Table
@@ -333,13 +416,21 @@ with tab2:
     for method in methods:
         labels = labels_dict[method]
         X_for_metrics = X_pca
-        metrics_dict[method] = {
-            'Silhouette': silhouette_score(X_for_metrics, labels),
-            'Davies–Bouldin': davies_bouldin_score(X_for_metrics, labels),
-            'Calinski–Harabasz': calinski_harabasz_score(X_for_metrics, labels)
-        }
+        try:
+            metrics_dict[method] = {
+                'Silhouette': silhouette_score(X_for_metrics, labels),
+                'Davies–Bouldin': davies_bouldin_score(X_for_metrics, labels),
+                'Calinski–Harabasz': calinski_harabasz_score(X_for_metrics, labels)
+            }
+        except Exception as e:
+            metrics_dict[method] = {
+                'Silhouette': None,
+                'Davies–Bouldin': None,
+                'Calinski–Harabasz': None
+            }
+            st.warning(f"⚠️ Metrics could not be computed for {method}: {e}")
 
-    # Convert to DataFrame for display
+    # Convert to DataFrame
     metrics_df = pd.DataFrame(metrics_dict).T.reset_index().rename(columns={'index':'Method'})
 
     st.subheader("📊 Spectral Clustering Evaluation Metrics")
@@ -354,29 +445,32 @@ with tab2:
     # -------------------------------
     st.subheader("📊 Metrics Comparison (Visual)")
 
-    # Silhouette Score Bar Chart
+    # Silhouette Score
     fig_silhouette = px.bar(
         metrics_df, x='Method', y='Silhouette',
         color='Silhouette', color_continuous_scale='Viridis',
-        text='Silhouette', title="Silhouette Score Comparison"
+        text=metrics_df['Silhouette'].apply(lambda x: f"{x:.3f}" if pd.notnull(x) else "NA"),
+        title="Silhouette Score Comparison"
     )
-    st.plotly_chart(fig_silhouette, use_container_width=True)
+    st.plotly_chart(fig_silhouette, use_container_width=True, key="silhouette_plot")
 
-    # Davies-Bouldin Score Bar Chart (lower is better)
+    # Davies-Bouldin (lower is better)
     fig_db = px.bar(
         metrics_df, x='Method', y='Davies–Bouldin',
         color='Davies–Bouldin', color_continuous_scale='Inferno_r',
-        text='Davies–Bouldin', title="Davies–Bouldin Score Comparison (Lower is Better)"
+        text=metrics_df['Davies–Bouldin'].apply(lambda x: f"{x:.3f}" if pd.notnull(x) else "NA"),
+        title="Davies–Bouldin Score Comparison (Lower is Better)"
     )
-    st.plotly_chart(fig_db, use_container_width=True)
+    st.plotly_chart(fig_db, use_container_width=True, key="db_plot")
 
-    # Calinski–Harabasz Score Bar Chart
+    # Calinski–Harabasz Score
     fig_ch = px.bar(
         metrics_df, x='Method', y='Calinski–Harabasz',
         color='Calinski–Harabasz', color_continuous_scale='Cividis',
-        text='Calinski–Harabasz', title="Calinski–Harabasz Score Comparison"
+        text=metrics_df['Calinski–Harabasz'].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "NA"),
+        title="Calinski–Harabasz Score Comparison"
     )
-    st.plotly_chart(fig_ch, use_container_width=True)
+    st.plotly_chart(fig_ch, use_container_width=True, key="ch_plot")
 
 # -------------------------------
 # TAB 3: Cluster Characteristics

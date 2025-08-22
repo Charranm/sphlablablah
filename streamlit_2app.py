@@ -24,7 +24,7 @@ st.markdown("This dashboard displays insights, clustering results, and interacti
 # -------------------------------
 # STEP 0: Load Raw Data
 # -------------------------------
-df = pd.read_csv('D:/university/DISSERTATION/US  E-commerce records 2020.csv', encoding='windows-1252')
+df = pd.read_csv('US  E-commerce records 2020.csv', encoding='windows-1252')
 st.success(f"✅ Loaded dataset with {df.shape[0]:,} rows and {df.shape[1]:,} columns.")
 
 # -------------------------------
@@ -207,58 +207,111 @@ cluster_summary = df_sampled.groupby('Cluster').agg({
 # -------------------------------
 # Prepare Figures
 # -------------------------------
-methods = ['nearest_neighbors', 'rbf', 'precomputed']
-labels_dict = {'nearest_neighbors': labels_nn, 'rbf': labels_rbf, 'precomputed': labels_pre}
+# -------------------------------
+# Prepare Figures (Extended with Cosine & Manhattan)
+# -------------------------------
+from sklearn.metrics import pairwise_distances, silhouette_score
 
-# PCA scatter plots per method
-fig_methods = make_subplots(
-    rows=1, cols=3,
-    subplot_titles=[f"{m} (Silhouette: {results[m]:.2f})" for m in methods]
+methods_extended = ['nearest_neighbors', 'rbf', 'precomputed', 'cosine', 'manhattan']
+labels_dict_extended = {}
+silhouette_scores_extended = {}
+
+# Cosine affinity
+sc_cosine = SpectralClustering(n_clusters=3, affinity='cosine', random_state=42)
+labels_cosine = sc_cosine.fit_predict(X_pca)
+labels_dict_extended['cosine'] = labels_cosine
+silhouette_scores_extended['cosine'] = silhouette_score(X_pca, labels_cosine)
+
+# Manhattan affinity (precomputed distance matrix)
+affinity_matrix_manhattan = pairwise_distances(X_pca, metric='manhattan')
+sc_manhattan = SpectralClustering(n_clusters=3, affinity='precomputed', random_state=42)
+labels_manhattan = sc_manhattan.fit_predict(affinity_matrix_manhattan)
+labels_dict_extended['manhattan'] = labels_manhattan
+silhouette_scores_extended['manhattan'] = silhouette_score(X_pca, labels_manhattan)
+
+# Keep original labels + scores
+labels_dict_extended.update({
+    'nearest_neighbors': labels_nn,
+    'rbf': labels_rbf,
+    'precomputed': labels_pre
+})
+silhouette_scores_extended.update(results)  # results already had nn/rbf/precomputed
+
+# --- PCA Scatter Plots ---
+fig_methods_all = make_subplots(
+    rows=2, cols=3,
+    subplot_titles=[f"{m} (Silhouette: {silhouette_scores_extended[m]:.2f})" for m in methods_extended]
 )
+
 colors = px.colors.qualitative.Plotly
-for i, method in enumerate(methods):
-    df_plot = pd.DataFrame({'PCA1': X_pca[:,0], 'PCA2': X_pca[:,1], 'Cluster': labels_dict[method].astype(str)})
+row, col = 1, 1
+for i, method in enumerate(methods_extended):
+    df_plot = pd.DataFrame({
+        'PCA1': X_pca[:, 0],
+        'PCA2': X_pca[:, 1],
+        'Cluster': labels_dict_extended[method].astype(str)
+    })
     for j, cluster in enumerate(sorted(df_plot['Cluster'].unique())):
         cluster_data = df_plot[df_plot['Cluster'] == cluster]
-        fig_methods.add_trace(
+        fig_methods_all.add_trace(
             go.Scatter(
-                x=cluster_data['PCA1'], y=cluster_data['PCA2'], mode='markers',
+                x=cluster_data['PCA1'], y=cluster_data['PCA2'],
+                mode='markers',
                 marker=dict(color=colors[j % len(colors)], size=6),
-                name=f"Cluster {cluster}" if i==0 else None,
-                showlegend=(i==0)
-            ), row=1, col=i+1
+                name=f"Cluster {cluster}" if i == 0 else None,
+                showlegend=(i == 0)
+            ),
+            row=row, col=col
         )
-fig_methods.update_layout(height=500, width=1200, title_text="Comparison of Spectral Clustering Methods (PCA Projection)", showlegend=True)
+    col += 1
+    if col > 3:
+        row += 1
+        col = 1
 
-# Radar charts per method
-metrics = ['Sales', 'Profit', 'Quantity', 'Discount', 'Profit Margin']
-fig_radar = make_subplots(
-    rows=1, cols=3,
-    specs=[[{'type':'polar'}, {'type':'polar'}, {'type':'polar'}]],
-    subplot_titles=[f"{m}" for m in methods]
+fig_methods_all.update_layout(
+    height=800, width=1200,
+    title_text="Spectral Clustering PCA Comparison (All 5 Affinities)",
+    showlegend=True
 )
-for i, method in enumerate(methods):
-    labels = labels_dict[method]
+
+# --- Radar Charts ---
+metrics = ['Sales', 'Profit', 'Quantity', 'Discount', 'Profit Margin']
+fig_radar_all = make_subplots(
+    rows=2, cols=3,
+    specs=[[{'type':'polar'}, {'type':'polar'}, {'type':'polar'}],
+           [{'type':'polar'}, {'type':'polar'}, None]],
+    subplot_titles=[f"{m}" for m in methods_extended]
+)
+
+for i, method in enumerate(methods_extended):
+    labels = labels_dict_extended[method]
     df_sampled_temp = df_sampled.copy()
     df_sampled_temp['Cluster_temp'] = labels
+    row = i // 3 + 1
+    col = i % 3 + 1
     for cluster in sorted(df_sampled_temp['Cluster_temp'].dropna().unique()):
-        cluster_data = df_sampled_temp[df_sampled_temp['Cluster_temp']==cluster].mean(numeric_only=True)
-        fig_radar.add_trace(
+        cluster_data = df_sampled_temp[df_sampled_temp['Cluster_temp'] == cluster].mean(numeric_only=True)
+        fig_radar_all.add_trace(
             go.Scatterpolar(
                 r=[cluster_data[m] for m in metrics],
                 theta=metrics,
                 fill='toself',
                 name=f'Cluster {cluster}',
                 legendgroup=f"{method}",
-                showlegend=(i==0)
-            ), row=1, col=i+1
+                showlegend=(i == 0)
+            ),
+            row=row, col=col
         )
-fig_radar.update_layout(height=500, width=1200, title_text="Cluster Characteristics Comparison Across Spectral Clustering Methods")
+
+fig_radar_all.update_layout(
+    height=800, width=1200,
+    title_text="Cluster Characteristics Comparison Across Spectral Clustering Methods (All 5 Affinities)"
+)
 
 # -------------------------------
 # Folium Map
 # -------------------------------
-geo_df = pd.read_csv('D:/university/DISSERTATION/world_country_and_usa_states_latitude_and_longitude_values.csv')
+geo_df = pd.read_csv('world_country_and_usa_states_latitude_and_longitude_values.csv')
 geo_df = geo_df[['usa_state', 'usa_state_latitude', 'usa_state_longitude']].drop_duplicates()
 
 state_summary = df.groupby(['State', 'Cluster']).agg({'Sales':'sum','Profit':'sum','Quantity':'sum'}).reset_index()
@@ -414,7 +467,7 @@ with tab1:
 # -------------------------------
 with tab2:
     st.subheader("🔹 Comparison of Spectral Clustering Methods (PCA Projection)")
-    st.plotly_chart(fig_methods, use_container_width=True, key="methods_plot")
+    st.plotly_chart(fig_methods_all, use_container_width=True)
     st.subheader("🔬 Spectral Clustering Methods")
 
     # Pick method interactively
@@ -534,7 +587,7 @@ with tab2:
         text=metrics_df['Calinski–Harabasz'].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "NA"),
         title="Calinski–Harabasz Score Comparison"
     )
-    st.plotly_chart(fig_ch, use_container_width=True, key="ch_plot")
+    st.plotly_chart(fig_radar_all, use_container_width=True)
 
     # --- Executive Explanation ---
     best_method = metrics_df.loc[metrics_df['Silhouette'].idxmax(), 'Method']

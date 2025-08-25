@@ -7,13 +7,12 @@ import folium
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.cluster import SpectralClustering
-from sklearn.metrics import silhouette_score
-from sklearn.metrics.pairwise import rbf_kernel
+from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
+from sklearn.metrics.pairwise import rbf_kernel, cosine_similarity
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import matplotlib.pyplot as plt
-
+from sklearn.neighbors import kneighbors_graph
 # -------------------------------
 # STREAMLIT PAGE SETTINGS
 # -------------------------------
@@ -36,8 +35,8 @@ df['Order Date'] = pd.to_datetime(df['Order Date'], format='%d-%m-%y', errors='c
 df['Order Month'] = df['Order Date'].dt.month
 df['Order Day'] = df['Order Date'].dt.day
 df['Order Weekday'] = df['Order Date'].dt.weekday
-df['Profit Margin'] = df['Profit'] / df['Sales']
-df['Unit Price'] = df['Sales'] / df['Quantity']
+df['Profit Margin'] = np.where(df['Sales'] != 0, df['Profit'] / df['Sales'], 0)
+df['Unit Price'] = np.where(df['Quantity'] != 0, df['Sales']/df['Quantity'], 0)
 df['Discounted Price'] = df['Sales'] * (1 - df['Discount'])
 
 # Encode categorical variables
@@ -55,11 +54,18 @@ for col in df.select_dtypes(include=[np.number]).columns:
 # Spectral Clustering
 # -------------------------------
 df_sampled = df[df['Country'] == 'United States'].sample(n=1000, random_state=42).copy()
-features = df_sampled[['Sales', 'Quantity', 'Discount', 'Profit', 'Profit Margin', 'Unit Price', 'Discounted Price']]
+features = df_sampled[['Sales', 'Quantity', 'Discount', 'Profit', 'Profit Margin', 'Unit Price', 'Discounted Price']].copy()
+features.replace([np.inf, -np.inf], np.nan, inplace=True)
+features.fillna(0, inplace=True)
+
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(features)
 pca = PCA(n_components=5, random_state=42)
 X_pca = pca.fit_transform(X_scaled)
+
+# Ensure PCA output has no NaN/Inf
+X_pca = np.nan_to_num(X_pca, nan=0.0, posinf=0.0, neginf=0.0)
+print(df_sampled[['Sales','Profit','Profit Margin']].describe())
 
 results = {}
 sc_nn = SpectralClustering(n_clusters=3, affinity='nearest_neighbors', n_neighbors=5, random_state=42)
@@ -205,57 +211,6 @@ cluster_summary = df_sampled.groupby('Cluster').agg({
 }).rename(columns={'Customer ID': 'Customer Count'})
 
 # -------------------------------
-# Prepare Figures
-# -------------------------------
-methods = ['nearest_neighbors', 'rbf', 'precomputed']
-labels_dict = {'nearest_neighbors': labels_nn, 'rbf': labels_rbf, 'precomputed': labels_pre}
-
-# PCA scatter plots per method
-fig_methods = make_subplots(
-    rows=1, cols=3,
-    subplot_titles=[f"{m} (Silhouette: {results[m]:.2f})" for m in methods]
-)
-colors = px.colors.qualitative.Plotly
-for i, method in enumerate(methods):
-    df_plot = pd.DataFrame({'PCA1': X_pca[:,0], 'PCA2': X_pca[:,1], 'Cluster': labels_dict[method].astype(str)})
-    for j, cluster in enumerate(sorted(df_plot['Cluster'].unique())):
-        cluster_data = df_plot[df_plot['Cluster'] == cluster]
-        fig_methods.add_trace(
-            go.Scatter(
-                x=cluster_data['PCA1'], y=cluster_data['PCA2'], mode='markers',
-                marker=dict(color=colors[j % len(colors)], size=6),
-                name=f"Cluster {cluster}" if i==0 else None,
-                showlegend=(i==0)
-            ), row=1, col=i+1
-        )
-fig_methods.update_layout(height=500, width=1200, title_text="Comparison of Spectral Clustering Methods (PCA Projection)", showlegend=True)
-
-# Radar charts per method
-metrics = ['Sales', 'Profit', 'Quantity', 'Discount', 'Profit Margin']
-fig_radar = make_subplots(
-    rows=1, cols=3,
-    specs=[[{'type':'polar'}, {'type':'polar'}, {'type':'polar'}]],
-    subplot_titles=[f"{m}" for m in methods]
-)
-for i, method in enumerate(methods):
-    labels = labels_dict[method]
-    df_sampled_temp = df_sampled.copy()
-    df_sampled_temp['Cluster_temp'] = labels
-    for cluster in sorted(df_sampled_temp['Cluster_temp'].dropna().unique()):
-        cluster_data = df_sampled_temp[df_sampled_temp['Cluster_temp']==cluster].mean(numeric_only=True)
-        fig_radar.add_trace(
-            go.Scatterpolar(
-                r=[cluster_data[m] for m in metrics],
-                theta=metrics,
-                fill='toself',
-                name=f'Cluster {cluster}',
-                legendgroup=f"{method}",
-                showlegend=(i==0)
-            ), row=1, col=i+1
-        )
-fig_radar.update_layout(height=500, width=1200, title_text="Cluster Characteristics Comparison Across Spectral Clustering Methods")
-
-# -------------------------------
 # Folium Map
 # -------------------------------
 geo_df = pd.read_csv('world_country_and_usa_states_latitude_and_longitude_values.csv')
@@ -294,6 +249,84 @@ k = st.sidebar.slider("🔢 k (clusters)", 2, 10, 3, 1)
 gamma = st.sidebar.slider("⚡ Gamma (for RBF / precomputed)", 0.1, 2.0, 1.0, 0.1)
 neighbors = st.sidebar.slider("🤝 Neighbors (for nearest_neighbors)", 2, 20, 10, 1)
 
+# -------------------------------
+# Helper function for clustering
+# -------------------------------
+
+
+# -------------------------------
+# Cached Clustering Function
+# -------------------------------
+@st.cache_data
+def run_clustering_cached(X_input, method, n_clusters=3, gamma=1.0, neighbors=10):
+    """
+    Robust Spectral Clustering runner, safe for Streamlit caching.
+    X_input: array-like. Can be features (n_samples x n_features) or precomputed (n_samples x n_samples)
+    method: 'rbf', 'nearest_neighbors', 'precomputed', 'cosine', 'manhattan'
+    """
+    X_input = np.nan_to_num(X_input, nan=0.0, posinf=0.0, neginf=0.0)
+    n_clusters = min(n_clusters, X_input.shape[0])
+
+    # ✅ Only compute affinity if NOT precomputed
+    if method == "precomputed":
+        if X_input.shape[0] != X_input.shape[1]:
+            raise ValueError(f"Precomputed affinity must be square: shape={X_input.shape}")
+        affinity_matrix = X_input
+    elif method == 'rbf':
+        affinity_matrix = rbf_kernel(X_input, gamma=gamma)
+    elif method == 'nearest_neighbors':
+        affinity_matrix = kneighbors_graph(
+            X_input, n_neighbors=min(neighbors, X_input.shape[0]-1), include_self=True
+        ).toarray()
+    elif method == 'cosine':
+        affinity_matrix = cosine_similarity(X_input)
+    elif method == 'manhattan':
+        from sklearn.metrics import pairwise_distances
+        affinity_matrix = np.exp(-pairwise_distances(X_input, metric='manhattan'))
+    else:
+        raise ValueError(f"Unknown method '{method}'")
+
+    affinity_matrix = np.nan_to_num(affinity_matrix, nan=0.0, posinf=0.0, neginf=0.0)
+    affinity_matrix[affinity_matrix < 0] = 0
+
+    sc = SpectralClustering(
+        n_clusters=n_clusters,
+        affinity='precomputed',
+        assign_labels='kmeans',
+        random_state=42
+    )
+    labels = sc.fit_predict(affinity_matrix)
+    return labels
+
+
+
+# --- Run clustering once with current sidebar selections ---
+if affinity_choice == "precomputed":
+    X_precomputed = rbf_kernel(X_pca, gamma=gamma)  # shape: (1000, 1000)
+    labels = run_clustering_cached(
+        X_precomputed,
+        affinity_choice,
+        n_clusters=k,
+        gamma=gamma,
+        neighbors=neighbors
+    )
+else:
+    labels = run_clustering_cached(
+        X_pca,
+        affinity_choice,
+        n_clusters=k,
+        gamma=gamma,
+        neighbors=neighbors
+    )
+
+
+# Update df_sampled clusters
+df_sampled['Cluster'] = labels
+
+# Merge back to main df
+df = df.drop(columns=['Cluster'], errors='ignore')
+df = df.merge(df_sampled[['Customer ID','Cluster']], on='Customer ID', how='left')
+
 
 # -------------------------------
 # STREAMLIT TABS FOR INTERACTIVITY
@@ -328,52 +361,6 @@ with tab1:
     # -----------------------------------
     # Step 3: Run clustering with chosen values
     # -----------------------------------
-    # -------------------------------
-    # Run clustering based on sidebar parameters
-    # -------------------------------
-    results = {}
-
-    if affinity_choice == "nearest_neighbors":
-        sc_model = SpectralClustering(
-            n_clusters=k, affinity="nearest_neighbors",
-            n_neighbors=neighbors, random_state=42
-        )
-        labels = sc_model.fit_predict(X_pca)
-
-    elif affinity_choice == "rbf":
-        sc_model = SpectralClustering(
-            n_clusters=k, affinity="rbf",
-            gamma=gamma, random_state=42
-        )
-        labels = sc_model.fit_predict(X_pca)
-
-    elif affinity_choice == "precomputed":
-        affinity_matrix = rbf_kernel(X_pca, gamma=gamma)
-        sc_model = SpectralClustering(
-            n_clusters=k, affinity="precomputed", random_state=42
-        )
-        labels = sc_model.fit_predict(affinity_matrix)
-
-    elif affinity_choice == "cosine":
-        sc_model = SpectralClustering(
-            n_clusters=k, affinity="cosine", random_state=42
-        )
-        labels = sc_model.fit_predict(X_pca)
-
-    elif affinity_choice == "manhattan":
-        from sklearn.metrics import pairwise_distances
-        affinity_matrix = pairwise_distances(X_pca, metric='manhattan')
-        sc_model = SpectralClustering(
-            n_clusters=k, affinity="precomputed", random_state=42
-        )
-        labels = sc_model.fit_predict(affinity_matrix)
-
-    # Update df_sampled clusters
-    df_sampled['Cluster'] = labels
-
-    # Merge back to main df
-    df = df.drop(columns=['Cluster'], errors='ignore')
-    df = df.merge(df_sampled[['Customer ID','Cluster']], on='Customer ID', how='left')
 
     # Display best silhouette
     results[affinity_choice] = silhouette_score(X_pca, labels)
@@ -414,6 +401,54 @@ with tab1:
 # -------------------------------
 with tab2:
     st.subheader("🔹 Comparison of Spectral Clustering Methods (PCA Projection)")
+    # -------------------------------
+    # Compute clustering for all methods
+    # -------------------------------
+    methods = ["nearest_neighbors", "rbf", "precomputed", "cosine", "manhattan"]
+    labels_dict = {}
+
+    for method in methods:
+        if method == "precomputed":
+            # Precompute RBF kernel to ensure square matrix
+            X_precomputed = rbf_kernel(X_pca, gamma=gamma)
+            labels_dict[method] = run_clustering_cached(
+                X_precomputed,
+                method,
+                n_clusters=k,
+                gamma=gamma,
+                neighbors=neighbors
+            )
+        else:
+            labels_dict[method] = run_clustering_cached(
+                X_pca,
+                method,
+                n_clusters=k,
+                gamma=gamma,
+                neighbors=neighbors
+            )
+
+
+    # Recompute clustering for each method with current sidebar params
+    # -------------------------------
+    # Compute precomputed affinity once
+    # -------------------------------
+
+    # Create PCA scatter with all methods side by side
+    methods = ["nearest_neighbors", "rbf", "precomputed", "cosine"]
+    methods += ["manhattan"]  # add manhattan last for layout
+    fig_methods = make_subplots(rows=1, cols=len(methods), subplot_titles=methods)
+    for idx, method in enumerate(methods, start=1):
+        fig_methods.add_trace(
+            go.Scatter(
+                x=X_pca[:, 0], y=X_pca[:, 1],
+                mode="markers",
+                marker=dict(color=labels_dict[method], colorscale="Viridis"),
+                showlegend=False
+            ),
+            row=1, col=idx
+        )
+    fig_methods.update_layout(title_text="Spectral Clustering Results (All Methods)")
+
     st.plotly_chart(fig_methods, use_container_width=True, key="methods_plot")
     st.subheader("🔬 Spectral Clustering Methods")
 
@@ -436,6 +471,7 @@ with tab2:
         """,
         "RBF Kernel": """
         **RBF Kernel Affinity**
+        
         - Uses Gaussian similarity with parameter γ.  
         - ✅ Smooth, balances local + global structure.  
         - ⚠️ Needs feature scaling + γ tuning.  
@@ -467,19 +503,13 @@ with tab2:
     # Display interactive explanation
     st.info(explanations[method_choice])
     st.subheader("📊 Spectral Clustering Evaluation Metrics")
+    
 
     # -------------------------------
     # Cluster Evaluation Metrics Table
     # -------------------------------
-    from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
-
     metrics_dict = {}
-    methods = ['nearest_neighbors', 'rbf', 'precomputed']
-    labels_dict = {
-        'nearest_neighbors': labels_nn,
-        'rbf': labels_rbf,
-        'precomputed': labels_pre
-    }
+    methods = ["nearest_neighbors", "rbf", "precomputed", "cosine", "manhattan"]
 
     for method in methods:
         labels = labels_dict[method]
@@ -559,41 +589,42 @@ with tab2:
 # TAB 3: Cluster Characteristics
 # -------------------------------
 with tab3:
-    st.subheader("🔹 Cluster Characteristics Comparison (Radar Charts)")
+    st.subheader("🔎 Cluster Characteristics")
+
+    # --- Dynamic Radar Charts Across Methods ---
+    methods = ["nearest_neighbors", "rbf", "precomputed", "cosine", "manhattan"]
+    labels_dict_radar = labels_dict  # reuse from tab2
 
     metrics = ['Sales', 'Profit', 'Quantity', 'Discount', 'Profit Margin']
     fig_radar = make_subplots(
-        rows=1, cols=3,
-        specs=[[{'type':'polar'}, {'type':'polar'}, {'type':'polar'}]],
-        subplot_titles=[f"{m}" for m in methods]
+        rows=1, cols=len(methods),
+        specs=[[{'type':'polar'}]*len(methods)],
+        subplot_titles=methods
     )
 
     for i, method in enumerate(methods):
-        labels = labels_dict[method]
-        df_sampled_temp = df_sampled.copy()
-        df_sampled_temp['Cluster_temp'] = labels  
-
-        for cluster in sorted(df_sampled_temp['Cluster_temp'].dropna().unique()):
-            cluster_data = df_sampled_temp[df_sampled_temp['Cluster_temp'] == cluster].mean(numeric_only=True)
+        df_temp = df_sampled.copy()
+        df_temp['Cluster_temp'] = labels_dict_radar[method]
+        for cluster in sorted(df_temp['Cluster_temp'].dropna().unique()):
+            cluster_data = df_temp[df_temp['Cluster_temp'] == cluster].mean(numeric_only=True)
             fig_radar.add_trace(
                 go.Scatterpolar(
                     r=[cluster_data[m] for m in metrics],
                     theta=metrics,
                     fill='toself',
-                    name=f'Cluster {cluster}',
-                    legendgroup=f"{method}",
-                    showlegend=(i==0)
+                    name=f'{method} - Cluster {cluster}',
+                    showlegend=(i == 0)
                 ),
                 row=1, col=i+1
             )
 
     fig_radar.update_layout(
-        height=500,
-        width=1200,
-        title_text="Cluster Characteristics Comparison Across Spectral Clustering Methods"
+        height=600, width=1600,
+        title_text="Cluster Characteristics Across Methods"
     )
 
     st.plotly_chart(fig_radar, use_container_width=True)
+
     st.subheader("ℹ️ Understanding the 'Cluster' Column")
 
     # -------------------------------

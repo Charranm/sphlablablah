@@ -16,7 +16,8 @@ from sklearn.neighbors import kneighbors_graph
 # -------------------------------
 # STREAMLIT PAGE SETTINGS
 # -------------------------------
-st.set_page_config(page_title="US E-Commerce Spectral Clustering", layout="wide")
+st.set_page_config(
+    page_title="US E-Commerce Spectral Clustering", layout="wide")
 st.title("📊 US E-Commerce Spectral Clustering Dashboard")
 st.markdown("This dashboard displays insights, clustering results, and interactive maps for the 2020 US E-Commerce dataset.")
 
@@ -24,14 +25,16 @@ st.markdown("This dashboard displays insights, clustering results, and interacti
 # STEP 0: Load Raw Data
 # -------------------------------
 df = pd.read_csv('US  E-commerce records 2020.csv', encoding='windows-1252')
-st.success(f"✅ Loaded dataset with {df.shape[0]:,} rows and {df.shape[1]:,} columns.")
+st.success(
+    f"✅ Loaded dataset with {df.shape[0]:,} rows and {df.shape[1]:,} columns.")
 
 # -------------------------------
 # Data Preprocessing
 # -------------------------------
 df['Postal Code'] = df['Postal Code'].fillna(0).astype(int)
 df.drop_duplicates(inplace=True)
-df['Order Date'] = pd.to_datetime(df['Order Date'], format='%d-%m-%y', errors='coerce')
+df['Order Date'] = pd.to_datetime(
+    df['Order Date'], format='%d-%m-%y', errors='coerce')
 df['Order Month'] = df['Order Date'].dt.month
 df['Order Day'] = df['Order Date'].dt.day
 df['Order Weekday'] = df['Order Date'].dt.weekday
@@ -53,8 +56,10 @@ for col in df.select_dtypes(include=[np.number]).columns:
 # -------------------------------
 # Spectral Clustering
 # -------------------------------
-df_sampled = df[df['Country'] == 'United States'].sample(n=1000, random_state=42).copy()
-features = df_sampled[['Sales', 'Quantity', 'Discount', 'Profit', 'Profit Margin', 'Unit Price', 'Discounted Price']].copy()
+df_sampled = df[df['Country'] == 'United States'].sample(
+    n=1000, random_state=42).copy()
+features = df_sampled[['Sales', 'Quantity', 'Discount', 'Profit',
+                       'Profit Margin', 'Unit Price', 'Discounted Price']].copy()
 features.replace([np.inf, -np.inf], np.nan, inplace=True)
 features.fillna(0, inplace=True)
 
@@ -65,19 +70,22 @@ X_pca = pca.fit_transform(X_scaled)
 
 # Ensure PCA output has no NaN/Inf
 X_pca = np.nan_to_num(X_pca, nan=0.0, posinf=0.0, neginf=0.0)
-print(df_sampled[['Sales','Profit','Profit Margin']].describe())
+print(df_sampled[['Sales', 'Profit', 'Profit Margin']].describe())
 
 results = {}
-sc_nn = SpectralClustering(n_clusters=3, affinity='nearest_neighbors', n_neighbors=5, random_state=42)
+sc_nn = SpectralClustering(
+    n_clusters=3, affinity='nearest_neighbors', n_neighbors=5, random_state=42)
 labels_nn = sc_nn.fit_predict(X_pca)
 results['nearest_neighbors'] = silhouette_score(X_pca, labels_nn)
 
-sc_rbf = SpectralClustering(n_clusters=3, affinity='rbf', gamma=1.0, random_state=42)
+sc_rbf = SpectralClustering(
+    n_clusters=3, affinity='rbf', gamma=1.0, random_state=42)
 labels_rbf = sc_rbf.fit_predict(X_pca)
 results['rbf'] = silhouette_score(X_pca, labels_rbf)
 
 affinity_matrix = rbf_kernel(X_pca, gamma=1.0)
-sc_pre = SpectralClustering(n_clusters=3, affinity='precomputed', random_state=42)
+sc_pre = SpectralClustering(
+    n_clusters=3, affinity='precomputed', random_state=42)
 labels_pre = sc_pre.fit_predict(affinity_matrix)
 results['precomputed'] = silhouette_score(X_pca, labels_pre)
 
@@ -88,12 +96,14 @@ df_sampled['Cluster'] = {
     'precomputed': labels_pre
 }[best_method]
 
-st.write(f"**🏆 Best Method:** `{best_method}` with Silhouette Score **{results[best_method]:.4f}**")
+st.write(
+    f"**🏆 Best Method:** `{best_method}` with Silhouette Score **{results[best_method]:.4f}**")
 
 # Merge cluster labels back to main df
 # After picking best_method the first time (before tabs) KEEP labels only for df_sampled
 df = df.drop(columns=['Cluster'], errors='ignore')  # ensure clean
-df = df.merge(df_sampled[['Customer ID','Cluster']], on='Customer ID', how='left')
+df = df.merge(df_sampled[['Customer ID', 'Cluster']],
+              on='Customer ID', how='left')
 
 # -------------------------------
 # Plotly Visualizations
@@ -105,12 +115,15 @@ sales_stats = {
     'Min Sales': df['Sales'].min(),
     'Sales Std Dev': df['Sales'].std()
 }
-stats_df = pd.DataFrame.from_dict(sales_stats, orient='index', columns=['Value']).reset_index()
-fig1 = px.bar(stats_df, x='index', y='Value', color='index', text=[f"${x:,.2f}" for x in stats_df['Value']])
+stats_df = pd.DataFrame.from_dict(
+    sales_stats, orient='index', columns=['Value']).reset_index()
+fig1 = px.bar(stats_df, x='index', y='Value', color='index',
+              text=[f"${x:,.2f}" for x in stats_df['Value']])
 
 
 state_profit = df.groupby('State')['Profit'].sum().sort_values(ascending=False)
-fig2 = px.bar(state_profit.reset_index(), x='State', y='Profit', color='Profit', color_continuous_scale='Viridis')
+fig2 = px.bar(state_profit.reset_index(), x='State', y='Profit',
+              color='Profit', color_continuous_scale='Viridis')
 
 # -------------------------------
 # Monthly Sales Line Chart
@@ -150,7 +163,8 @@ cluster_summary = df.groupby('Cluster').agg({
     'Customer ID': 'count'
 }).rename(columns={'Customer ID': 'Customer Count'})
 
-fig4 = make_subplots(rows=1, cols=2, specs=[[{'type': 'xy'}, {'type': 'domain'}]])
+fig4 = make_subplots(rows=1, cols=2, specs=[
+                     [{'type': 'xy'}, {'type': 'domain'}]])
 
 # Bar chart for customers per segment
 fig4.add_trace(
@@ -187,7 +201,8 @@ fig4.update_layout(
 # -------------------------------
 
 category_sales = df.groupby('Category')['Quantity'].sum().reset_index()
-fig6 = px.bar(category_sales, x='Category', y='Quantity', color='Category', text_auto=True)
+fig6 = px.bar(category_sales, x='Category', y='Quantity',
+              color='Category', text_auto=True)
 
 
 margin = (df['Profit'].sum() / df['Sales'].sum()) * 100
@@ -197,7 +212,7 @@ fig7 = go.Figure(go.Indicator(
     number={'suffix': '%'},
     title={'text': "Overall Profit Margin", 'font': {'size': 28}},
     gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "white"}, 'steps': [{'range': [0, 20], 'color': "lightgray"},
-        {'range': [0, 50], 'color': "red"}, {'range': [50, 100], 'color': "green"},]}
+                                                                             {'range': [0, 50], 'color': "red"}, {'range': [50, 100], 'color': "green"},]}
 ))
 state_profit = df.groupby('State')['Profit'].sum().sort_values(ascending=False)
 
@@ -213,14 +228,18 @@ cluster_summary = df_sampled.groupby('Cluster').agg({
 # -------------------------------
 # Folium Map
 # -------------------------------
-geo_df = pd.read_csv('world_country_and_usa_states_latitude_and_longitude_values.csv')
-geo_df = geo_df[['usa_state', 'usa_state_latitude', 'usa_state_longitude']].drop_duplicates()
+geo_df = pd.read_csv(
+    'world_country_and_usa_states_latitude_and_longitude_values.csv')
+geo_df = geo_df[['usa_state', 'usa_state_latitude',
+                 'usa_state_longitude']].drop_duplicates()
 
-state_summary = df.groupby(['State', 'Cluster']).agg({'Sales':'sum','Profit':'sum','Quantity':'sum'}).reset_index()
-state_summary = state_summary.merge(geo_df, left_on='State', right_on='usa_state', how='left')
+state_summary = df.groupby(['State', 'Cluster']).agg(
+    {'Sales': 'sum', 'Profit': 'sum', 'Quantity': 'sum'}).reset_index()
+state_summary = state_summary.merge(
+    geo_df, left_on='State', right_on='usa_state', how='left')
 
 m = folium.Map(location=[37.0902, -95.7129], zoom_start=4)
-for _, row in state_summary.dropna(subset=['usa_state_latitude','usa_state_longitude']).iterrows():
+for _, row in state_summary.dropna(subset=['usa_state_latitude', 'usa_state_longitude']).iterrows():
     folium.CircleMarker(
         location=[row['usa_state_latitude'], row['usa_state_longitude']],
         radius=6,
@@ -246,8 +265,10 @@ affinity_choice = st.sidebar.selectbox(
 
 # Cluster sliders
 k = st.sidebar.slider("🔢 k (clusters)", 2, 10, 3, 1)
-gamma = st.sidebar.slider("⚡ Gamma (for RBF / precomputed)", 0.1, 2.0, 1.0, 0.1)
-neighbors = st.sidebar.slider("🤝 Neighbors (for nearest_neighbors)", 2, 20, 10, 1)
+gamma = st.sidebar.slider(
+    "⚡ Gamma (for RBF / precomputed)", 0.1, 2.0, 1.0, 0.1)
+neighbors = st.sidebar.slider(
+    "🤝 Neighbors (for nearest_neighbors)", 2, 20, 10, 1)
 
 # -------------------------------
 # Helper function for clustering
@@ -270,7 +291,8 @@ def run_clustering_cached(X_input, method, n_clusters=3, gamma=1.0, neighbors=10
     # ✅ Only compute affinity if NOT precomputed
     if method == "precomputed":
         if X_input.shape[0] != X_input.shape[1]:
-            raise ValueError(f"Precomputed affinity must be square: shape={X_input.shape}")
+            raise ValueError(
+                f"Precomputed affinity must be square: shape={X_input.shape}")
         affinity_matrix = X_input
     elif method == 'rbf':
         affinity_matrix = rbf_kernel(X_input, gamma=gamma)
@@ -282,11 +304,13 @@ def run_clustering_cached(X_input, method, n_clusters=3, gamma=1.0, neighbors=10
         affinity_matrix = cosine_similarity(X_input)
     elif method == 'manhattan':
         from sklearn.metrics import pairwise_distances
-        affinity_matrix = np.exp(-pairwise_distances(X_input, metric='manhattan'))
+        affinity_matrix = np.exp(-pairwise_distances(X_input,
+                                 metric='manhattan'))
     else:
         raise ValueError(f"Unknown method '{method}'")
 
-    affinity_matrix = np.nan_to_num(affinity_matrix, nan=0.0, posinf=0.0, neginf=0.0)
+    affinity_matrix = np.nan_to_num(
+        affinity_matrix, nan=0.0, posinf=0.0, neginf=0.0)
     affinity_matrix[affinity_matrix < 0] = 0
 
     sc = SpectralClustering(
@@ -297,7 +321,6 @@ def run_clustering_cached(X_input, method, n_clusters=3, gamma=1.0, neighbors=10
     )
     labels = sc.fit_predict(affinity_matrix)
     return labels
-
 
 
 # --- Run clustering once with current sidebar selections ---
@@ -325,16 +348,17 @@ df_sampled['Cluster'] = labels
 
 # Merge back to main df
 df = df.drop(columns=['Cluster'], errors='ignore')
-df = df.merge(df_sampled[['Customer ID','Cluster']], on='Customer ID', how='left')
+df = df.merge(df_sampled[['Customer ID', 'Cluster']],
+              on='Customer ID', how='left')
 
 
 # -------------------------------
 # STREAMLIT TABS FOR INTERACTIVITY
 # -------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Sales Stats", 
-    "🔹 Spectral Clustering Comparison", 
-    "📈 Cluster Characteristics", 
+    "📊 Sales Stats",
+    "🔹 Spectral Clustering Comparison",
+    "📈 Cluster Characteristics",
     "🗺️ US Map"
 ])
 
@@ -364,7 +388,8 @@ with tab1:
 
     # Display best silhouette
     results[affinity_choice] = silhouette_score(X_pca, labels)
-    st.success(f"🏆 Best Method: **{affinity_choice}** with Silhouette Score: {results[affinity_choice]:.4f}")
+    st.success(
+        f"🏆 Best Method: **{affinity_choice}** with Silhouette Score: {results[affinity_choice]:.4f}")
 
     # -----------------------------------
     # Step 4: Your Sales Statistics section
@@ -377,10 +402,12 @@ with tab1:
     st.write(f"• Std Dev: ${sales_stats['Sales Std Dev']:,.2f}")
 
     st.subheader("TOP 5 STATES BY PROFIT")
-    st.dataframe(state_profit.head().reset_index().rename(columns={'Profit':'Profit ($)'}))
+    st.dataframe(state_profit.head().reset_index().rename(
+        columns={'Profit': 'Profit ($)'}))
 
     st.subheader("TOP 5 SUB-CATEGORIES BY PROFIT")
-    st.dataframe(top_subcats[['Sub-Category','Profit']].head().rename(columns={'Profit':'Profit ($)'}))
+    st.dataframe(top_subcats[['Sub-Category', 'Profit']
+                             ].head().rename(columns={'Profit': 'Profit ($)'}))
 
     st.subheader("📅 Monthly Sales Trend")
     st.plotly_chart(fig_monthly, use_container_width=True, key="monthly_trend")
@@ -400,11 +427,13 @@ with tab1:
 # TAB 2: Method Comparisons + Metrics
 # -------------------------------
 with tab2:
-    st.subheader("🔹 Comparison of Spectral Clustering Methods (PCA Projection)")
+    st.subheader(
+        "🔹 Comparison of Spectral Clustering Methods (PCA Projection)")
     # -------------------------------
     # Compute clustering for all methods
     # -------------------------------
-    methods = ["nearest_neighbors", "rbf", "precomputed", "cosine", "manhattan"]
+    methods = ["nearest_neighbors", "rbf",
+               "precomputed", "cosine", "manhattan"]
     labels_dict = {}
 
     for method in methods:
@@ -427,7 +456,6 @@ with tab2:
                 neighbors=neighbors
             )
 
-
     # Recompute clustering for each method with current sidebar params
     # -------------------------------
     # Compute precomputed affinity once
@@ -436,7 +464,8 @@ with tab2:
     # Create PCA scatter with all methods side by side
     methods = ["nearest_neighbors", "rbf", "precomputed", "cosine"]
     methods += ["manhattan"]  # add manhattan last for layout
-    fig_methods = make_subplots(rows=1, cols=len(methods), subplot_titles=methods)
+    fig_methods = make_subplots(
+        rows=1, cols=len(methods), subplot_titles=methods)
     for idx, method in enumerate(methods, start=1):
         fig_methods.add_trace(
             go.Scatter(
@@ -447,7 +476,8 @@ with tab2:
             ),
             row=1, col=idx
         )
-    fig_methods.update_layout(title_text="Spectral Clustering Results (All Methods)")
+    fig_methods.update_layout(
+        title_text="Spectral Clustering Results (All Methods)")
 
     st.plotly_chart(fig_methods, use_container_width=True, key="methods_plot")
     st.subheader("🔬 Spectral Clustering Methods")
@@ -455,7 +485,8 @@ with tab2:
     # Pick method interactively
     method_choice = st.radio(
         "Choose clustering method:",
-        ["Nearest Neighbors", "RBF Kernel", "Precomputed Affinity", "Cosine Similarity", "Manhattan Distance"],
+        ["Nearest Neighbors", "RBF Kernel", "Precomputed Affinity",
+            "Cosine Similarity", "Manhattan Distance"],
         horizontal=True,
         key="method_radio"
     )
@@ -503,13 +534,13 @@ with tab2:
     # Display interactive explanation
     st.info(explanations[method_choice])
     st.subheader("📊 Spectral Clustering Evaluation Metrics")
-    
 
     # -------------------------------
     # Cluster Evaluation Metrics Table
     # -------------------------------
     metrics_dict = {}
-    methods = ["nearest_neighbors", "rbf", "precomputed", "cosine", "manhattan"]
+    methods = ["nearest_neighbors", "rbf",
+               "precomputed", "cosine", "manhattan"]
 
     for method in methods:
         labels = labels_dict[method]
@@ -529,7 +560,8 @@ with tab2:
             st.warning(f"⚠️ Metrics could not be computed for {method}: {e}")
 
     # Convert to DataFrame
-    metrics_df = pd.DataFrame(metrics_dict).T.reset_index().rename(columns={'index':'Method'})
+    metrics_df = pd.DataFrame(metrics_dict).T.reset_index().rename(
+        columns={'index': 'Method'})
 
     st.dataframe(metrics_df.style.format({
         'Silhouette': "{:.4f}",
@@ -543,16 +575,19 @@ with tab2:
     fig_silhouette = px.bar(
         metrics_df, x='Method', y='Silhouette',
         color='Silhouette', color_continuous_scale='Viridis',
-        text=metrics_df['Silhouette'].apply(lambda x: f"{x:.3f}" if pd.notnull(x) else "NA"),
+        text=metrics_df['Silhouette'].apply(
+            lambda x: f"{x:.3f}" if pd.notnull(x) else "NA"),
         title="Silhouette Score Comparison"
     )
-    st.plotly_chart(fig_silhouette, use_container_width=True, key="silhouette_plot")
+    st.plotly_chart(fig_silhouette, use_container_width=True,
+                    key="silhouette_plot")
 
     # Davies-Bouldin (lower is better)
     fig_db = px.bar(
         metrics_df, x='Method', y='Davies–Bouldin',
         color='Davies–Bouldin', color_continuous_scale='Inferno_r',
-        text=metrics_df['Davies–Bouldin'].apply(lambda x: f"{x:.3f}" if pd.notnull(x) else "NA"),
+        text=metrics_df['Davies–Bouldin'].apply(
+            lambda x: f"{x:.3f}" if pd.notnull(x) else "NA"),
         title="Davies–Bouldin Score Comparison (Lower is Better)"
     )
     st.plotly_chart(fig_db, use_container_width=True, key="db_plot")
@@ -561,7 +596,8 @@ with tab2:
     fig_ch = px.bar(
         metrics_df, x='Method', y='Calinski–Harabasz',
         color='Calinski–Harabasz', color_continuous_scale='Cividis',
-        text=metrics_df['Calinski–Harabasz'].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "NA"),
+        text=metrics_df['Calinski–Harabasz'].apply(
+            lambda x: f"{x:.1f}" if pd.notnull(x) else "NA"),
         title="Calinski–Harabasz Score Comparison"
     )
     st.plotly_chart(fig_ch, use_container_width=True, key="ch_plot")
@@ -582,7 +618,7 @@ with tab2:
       since the segmentation is based on **objective evaluation metrics**, not guesswork.
     """
 
-    st.success(explanation) 
+    st.success(explanation)
 
 
 # -------------------------------
@@ -592,13 +628,14 @@ with tab3:
     st.subheader("🔎 Cluster Characteristics")
 
     # --- Dynamic Radar Charts Across Methods ---
-    methods = ["nearest_neighbors", "rbf", "precomputed", "cosine", "manhattan"]
+    methods = ["nearest_neighbors", "rbf",
+               "precomputed", "cosine", "manhattan"]
     labels_dict_radar = labels_dict  # reuse from tab2
 
     metrics = ['Sales', 'Profit', 'Quantity', 'Discount', 'Profit Margin']
     fig_radar = make_subplots(
         rows=1, cols=len(methods),
-        specs=[[{'type':'polar'}]*len(methods)],
+        specs=[[{'type': 'polar'}]*len(methods)],
         subplot_titles=methods
     )
 
@@ -606,7 +643,8 @@ with tab3:
         df_temp = df_sampled.copy()
         df_temp['Cluster_temp'] = labels_dict_radar[method]
         for cluster in sorted(df_temp['Cluster_temp'].dropna().unique()):
-            cluster_data = df_temp[df_temp['Cluster_temp'] == cluster].mean(numeric_only=True)
+            cluster_data = df_temp[df_temp['Cluster_temp']
+                                   == cluster].mean(numeric_only=True)
             fig_radar.add_trace(
                 go.Scatterpolar(
                     r=[cluster_data[m] for m in metrics],
@@ -682,5 +720,7 @@ with tab3:
 # -------------------------------
 with tab4:
     st.subheader("🗺️ Customer Clusters Across US States")
-    st.markdown("The map shows total sales and cluster assignment for each state. Hover to see details.")
-    components.html(open('spectral_clustering_map.html','r',encoding='utf-8').read(), height=600)
+    st.markdown(
+        "The map shows total sales and cluster assignment for each state. Hover to see details.")
+    components.html(open('spectral_clustering_map.html', 'r',
+                    encoding='utf-8').read(), height=600)

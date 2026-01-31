@@ -1,6 +1,5 @@
 © 2025 CHARRAN M. All rights reserved. 
 This code may not be used, copied, or distributed without explicit permission.
-Absolutely! Here's a polished **README.md** for your GitHub repository. It’s structured to explain the project clearly, highlight the dataset, spectral clustering methods, interactive dashboard, and usage instructions.
 
 ````markdown
 # US E-Commerce Spectral Clustering Dashboard
@@ -19,7 +18,7 @@ The dashboard allows users to **experiment with hyperparameters**, compare clust
 - **Features included:** Sales, Quantity, Discount, Profit, Category, Segment, State, Customer ID, and more.  
 - **Sample size for clustering:** 1,000 US customers (random sample for PCA and clustering visualization).  
 
-> Note: You can substitute this dataset with any other dataset suitable for spectral clustering (e.g., [USA Flights Dataset](https://www.kaggle.com/flashgordon/usa-airport-dataset)).
+> Note: You can substitute this dataset with any other dataset suitable for spectral clustering 
 
 ---
 

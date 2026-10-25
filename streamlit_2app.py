@@ -104,7 +104,24 @@ st.write(
 df = df.drop(columns=['Cluster'], errors='ignore')  # ensure clean
 df = df.merge(df_sampled[['Customer ID', 'Cluster']],
               on='Customer ID', how='left')
+#browser download button 
+export_df = df.copy()
+export_df['Cluster'] = export_df['Cluster'].fillna('Unassigned').astype(str)
 
+if 'Order Date' in export_df.columns:
+    export_df['Order Date'] = export_df['Order Date'].dt.strftime('%Y-%m-%d')
+
+csv_data = export_df.to_csv(index=False, encoding='utf-8')
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("📥 Power BI Export")
+st.sidebar.download_button(
+    label="Download Clustered CSV",
+    data=csv_data,
+    file_name="US_Ecommerce_Clustered.csv",
+    mime="text/csv",
+    help="Click to download the dataset with cluster labels for Power BI."
+)
 # -------------------------------
 # Plotly Visualizations
 # -------------------------------

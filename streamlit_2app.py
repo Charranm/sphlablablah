@@ -618,14 +618,6 @@ with tab2:
       since the segmentation is based on **objective evaluation metrics**, not guesswork.
     """
 
-csv_data = export_df.to_csv(index=False).encode('utf-8')
-
-st.download_button(
-    label="📥 Download Clustered Data for Power BI",
-    data=csv_data,
-    file_name="US_Ecommerce_Clustered.csv",
-    mime="text/csv"
-)
 
 # -------------------------------
 # TAB 3: Cluster Characteristics
